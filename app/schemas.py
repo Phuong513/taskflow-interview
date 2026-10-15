@@ -1,6 +1,6 @@
 # app/schemas.py
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -21,21 +21,20 @@ class TokenData(BaseModel):
 class UserCreate(BaseModel):
     username: str
     email: str
-    password: str
-    # Issue: no field-level validation — no min length, no email format check, no password strength
+    password: str = Field(max_length=4096)
+    # Issue: no minimum length, email format check, or password strength rules
 
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = Field(default=None, max_length=4096)
 
 
 class UserOut(BaseModel):
     id: int
     username: str
     email: str
-    password_hash: str   # Issue: password hash is exposed in the response schema
     is_active: bool
     role: str
     created_at: datetime
@@ -61,7 +60,7 @@ class CommentCreate(BaseModel):
 class CommentOut(BaseModel):
     id: int
     content: str
-    author_id: int
+    author_id: Optional[int]
     created_at: datetime
 
     class Config:
@@ -96,7 +95,7 @@ class TaskOut(BaseModel):
     description: Optional[str]
     status: str
     priority: int
-    owner_id: int
+    owner_id: Optional[int]
     created_at: datetime
     due_date: Optional[datetime]
     tags: Optional[str]

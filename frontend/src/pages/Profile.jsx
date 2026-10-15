@@ -2,9 +2,11 @@
 import { useState } from 'react'
 import { usersApi } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { useNavigate } from 'react-router-dom'
 
 export default function Profile() {
-  const { user, login } = useAuth()
+  const { user, logout, refreshUser } = useAuth()
+  const navigate = useNavigate()
   const [form, setForm] = useState({ username: user?.username || '', email: user?.email || '', password: '' })
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState('')
@@ -19,6 +21,12 @@ export default function Profile() {
       const payload = { username: form.username, email: form.email }
       if (form.password) payload.password = form.password
       await usersApi.update(user.id, payload)
+      if (payload.password) {
+        logout()
+        navigate('/login')
+        return
+      }
+      await refreshUser()
       setSuccess('Profile updated successfully.')
       setForm(f => ({ ...f, password: '' }))
     } catch (err) {
@@ -62,7 +70,7 @@ export default function Profile() {
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required />
             </div>
             <div className="form-group">
-              <label className="form-label">New Password <span className="text-muted">(leave blank to keep)</span></label>
+              <label className="form-label">New Password <span className="text-muted">(leave blank to keep; changing it signs you out)</span></label>
               <input className="form-control" type="password" value={form.password}
                 onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder="••••••••" />
             </div>

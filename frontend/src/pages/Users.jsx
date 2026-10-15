@@ -103,9 +103,10 @@ export default function Users() {
                     <td className="text-muted">{new Date(u.created_at).toLocaleDateString()}</td>
                     <td>
                       <div className="actions">
-                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}>Edit</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}
+                          disabled={me?.role !== 'admin' && u.id !== me?.id}>Edit</button>
                         <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(u.id)}
-                          disabled={u.id === me?.id}>Delete</button>
+                          disabled={u.id === me?.id || me?.role !== 'admin'}>Delete</button>
                       </div>
                     </td>
                   </tr>

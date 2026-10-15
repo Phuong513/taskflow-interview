@@ -1,0 +1,15 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "candidate/luu-buu-phuong",
+    "main"
+  ],
+  "parent": {
+    "candidate/luu-buu-phuong": "main",
+    "main": null
+  },
+  "order": [
+    "main",
+    "candidate/luu-buu-phuong"
+  ]
+}

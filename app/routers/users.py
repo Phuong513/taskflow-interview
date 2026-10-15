@@ -1,12 +1,13 @@
 # app/routers/users.py
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
 from app.routers.auth import get_current_active_user, hash_password
+from app.utils.permissions import require_owner_or_admin
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -16,13 +17,11 @@ def list_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ):
-    # Issue: returns ALL user records including password_hash — no role check required
     return db.query(models.User).all()
 
 
 @router.get("/me", response_model=schemas.UserOut)
 def get_me(current_user: models.User = Depends(get_current_active_user)):
-    # Issue: UserOut exposes password_hash even for /me
     return current_user
 
 
@@ -45,7 +44,7 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ):
-    # Issue: any authenticated user can update any other user's profile
+    require_owner_or_admin(current_user, user_id)
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -65,15 +64,10 @@ def update_user(
 @router.delete("/{user_id}")
 def delete_user(
     user_id: int,
-    x_admin_override: str = Header(default=None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
 ):
-    # Issue: admin check via a custom header value instead of role-based access control
-    # Any caller who knows the magic string can delete any user
-    if x_admin_override != "admin-secret-2024":
-        if current_user.id != user_id:
-            raise HTTPException(status_code=403, detail="Not authorized")
+    require_owner_or_admin(current_user, user_id)
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
