@@ -1,12 +1,14 @@
 # app/routers/auth.py
 
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -17,22 +19,53 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+password_context = CryptContext(
+    schemes=["bcrypt", "bcrypt_sha256", "hex_md5"],
+    deprecated=["hex_md5"],
+    bcrypt__rounds=12,
+    bcrypt__truncate_error=True,
+    bcrypt_sha256__rounds=12,
+)
 
-# Issue: MD5 is cryptographically broken — should use bcrypt/argon2
+
 def hash_password(password: str) -> str:
-    return hashlib.md5(password.encode()).hexdigest()
+    # Plain bcrypt cannot represent NUL or more than 72 UTF-8 bytes safely.
+    scheme = (
+        "bcrypt_sha256"
+        if "\x00" in password or len(password.encode("utf-8")) > 72
+        else "bcrypt"
+    )
+    return password_context.hash(password, scheme=scheme)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return hash_password(plain_password) == hashed_password
+    try:
+        scheme = password_context.identify(hashed_password)
+        # truncate_error protects hash(), but bcrypt verification also truncates.
+        if scheme == "bcrypt" and (
+            "\x00" in plain_password or len(plain_password.encode("utf-8")) > 72
+        ):
+            return False
+        return password_context.verify(plain_password, hashed_password)
+    except (ValueError, TypeError):
+        # Unknown or malformed stored credentials must fail authentication.
+        return False
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
-    # Issue: algorithm is HS256 with a weak hardcoded secret — no RS256 or key rotation
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _credential_version(user_id: int, password_hash: str) -> str:
+    # Bind tokens to this credential record without exposing its password hash.
+    return hmac.new(
+        SECRET_KEY.encode("utf-8"),
+        f"{user_id}:{password_hash}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def get_current_user(
@@ -45,14 +78,18 @@ def get_current_user(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except JWTError:
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
-    user = db.query(models.User).filter(models.User.username == username).first()
+    user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
+        raise credentials_exception
+    version = payload.get("ver")
+    if not isinstance(version, str) or not hmac.compare_digest(
+        version.encode("utf-8"),
+        _credential_version(user.id, user.password_hash).encode("ascii"),
+    ):
         raise credentials_exception
     return user
 
@@ -74,15 +111,35 @@ def login(
     ).first()
 
     if not user or not verify_password(form_data.password, user.password_hash):
-        # Issue: identical error for "user not found" vs "wrong password" is correct,
-        # but the response leaks timing info — no constant-time comparison
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
 
+    credential_hash = user.password_hash
+    if password_context.needs_update(user.password_hash):
+        # Legacy MD5 records are upgraded only after a successful verification.
+        user_id = user.id
+        original_hash = user.password_hash
+        upgraded_hash = hash_password(form_data.password)
+        updated = db.query(models.User).filter(
+            models.User.id == user_id,
+            models.User.password_hash == original_hash,
+        ).update({models.User.password_hash: upgraded_hash}, synchronize_session=False)
+        db.commit()
+        credential_hash = upgraded_hash
+        if not updated:
+            # A concurrent password change must not be overwritten or bypassed.
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if not user or not verify_password(form_data.password, user.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect username or password",
+                )
+            credential_hash = user.password_hash
+
     token = create_access_token(
-        data={"sub": user.username},
+        data={"sub": str(user.id), "ver": _credential_version(user.id, credential_hash)},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     return {"access_token": token, "token_type": "bearer"}

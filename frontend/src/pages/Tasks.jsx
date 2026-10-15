@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { tasksApi } from '../api/client'
 import TaskModal from '../components/TaskModal'
+import { useAuth } from '../context/AuthContext'
 
 const PRIORITY_LABELS = { 1: 'Low', 2: 'Medium', 3: 'High' }
 const STATUS_LABELS = { todo: 'Todo', in_progress: 'In Progress', done: 'Done' }
@@ -12,6 +13,7 @@ function formatDate(dt) {
 }
 
 export default function Tasks() {
+  const { user } = useAuth()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -170,8 +172,10 @@ export default function Tasks() {
                     </td>
                     <td>
                       <div className="actions">
-                        <button className="btn btn-ghost btn-sm" onClick={() => setModalTask(task)}>Edit</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(task.id)}>Delete</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setModalTask(task)}
+                          disabled={user?.role !== 'admin' && task.owner_id !== user?.id}>Edit</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(task.id)}
+                          disabled={user?.role !== 'admin' && task.owner_id !== user?.id}>Delete</button>
                       </div>
                     </td>
                   </tr>
